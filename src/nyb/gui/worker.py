@@ -11,14 +11,13 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 class Task:
     path: Path
     op: str  # "encrypt" | "decrypt"
-    pw: bytes  # hasło dla tego pliku
+    pw: bytes
 
 class Worker(QObject):
-    item_progress = pyqtSignal(str, str, int, int)   # path, status, size, elapsed_ms
-    overall = pyqtSignal(int, int)                   # done, total
+    item_progress = pyqtSignal(str, str, int, int)
+    overall = pyqtSignal(int, int)
     finished = pyqtSignal()
 
-    # callable przyjmuje (Path, pw_bytes)
     def __init__(self, tasks: List[Task], do_encrypt: Callable[[Path, bytes], str] | None, do_decrypt: Callable[[Path, bytes], str] | None):
         super().__init__()
         self._tasks = tasks
@@ -62,5 +61,7 @@ def start_in_thread(worker: Worker) -> QThread:
     thread = QThread()
     worker.moveToThread(thread)
     thread.started.connect(worker.run)
+    # KLUCZOWE: po zakończeniu pracy worker-a, zamknij wątek:
+    worker.finished.connect(thread.quit)
     thread.start()
     return thread
