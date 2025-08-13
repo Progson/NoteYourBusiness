@@ -1,9 +1,11 @@
+# src/nyb/app.py
+from __future__ import annotations
 from PyQt6.QtWidgets import QApplication
 import sys
-from nyb.gui.launcher import LauncherWindow
 
-def run_gui() -> None:
-    app = QApplication(sys.argv)
-    w = LauncherWindow()
-    w.show()
-    sys.exit(app.exec())
+def run_gui():
+    from nyb.gui.web_launcher import WebLauncherWindow  # <- NOWY
+    app = QApplication.instance() or QApplication(sys.argv)
+    win = WebLauncherWindow()
+    win.show()
+    app.exec()
