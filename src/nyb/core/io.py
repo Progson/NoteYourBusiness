@@ -1,110 +1,121 @@
 # src/nyb/core/io.py
 from __future__ import annotations
-import os
+import os, json, base64, tempfile, shutil
 from contextlib import contextmanager
 from pathlib import Path
-import json, base64
 
 from nyb.core import header as hdr
-from nyb.core.crypto import derive_key_argon2id, encrypt_bytes, decrypt_bytes
+from nyb.core.crypto import derive_key_argon2id, encrypt_stream, decrypt_stream
+from nyb.core import metadata as metaio
+from nyb.utils.naming import next_collision_free
 
 @contextmanager
-def write_atomic(target_path: str, tmp_suffix: str = ".tmp"):
+def _atomic_writer(final_path: Path, tmp_suffix: str = ".tmp"):
     """
-    Minimalna wersja: zapis do target.tmp + fsync + os.replace.
+    Zwraca ścieżkę pliku tymczasowego do zapisu; po wyjściu z kontekstu podmienia atomowo.
     """
-    target = Path(target_path)
-    tmp = target.with_suffix(target.suffix + tmp_suffix)
-    tmp.parent.mkdir(parents=True, exist_ok=True)
-    f = open(tmp, "wb")
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = final_path.with_suffix(final_path.suffix + tmp_suffix)
+    f = open(tmp_path, "wb")
     try:
-        yield f
+        yield f, tmp_path
         f.flush()
         os.fsync(f.fileno())
     finally:
         f.close()
-    os.replace(tmp, target)
+    os.replace(tmp_path, final_path)
 
 def _b64(bs: bytes) -> str:
-    import base64
     return base64.b64encode(bs).decode("ascii")
 
 def _b64d(s: str) -> bytes:
-    import base64
     return base64.b64decode(s.encode("ascii"))
 
 def encrypt_path(path: str, password_source, cfg, logger=None):
     """
-    Minimalna implementacja: jeden plik → plik.nyb w tym samym katalogu.
-    Brak rekursji i kolizji nazw (dopiszemy później).
+    Strumieniowe szyfrowanie jednego pliku → *.nyb obok.
+    Aby nie trzymać ciphertextu w pamięci:
+      1) szyfrujemy dane do tymczasowego pliku ciphertext.tmp, zbieramy tag
+      2) składamy finalny plik: [HEADER z tagiem] + [ciphertext z tmp]
     """
-    p = Path(path)
-    if not p.is_file():
-        raise FileNotFoundError(f"Not a file: {p}")
+    src = Path(path)
+    if not src.is_file():
+        raise FileNotFoundError(f"Not a file: {src}")
 
-    # Wczytaj dane (na razie w pamięci)
-    plaintext = p.read_bytes()
+    # Docelowa ścieżka .nyb (z obsługą kolizji)
+    dst = src.with_suffix(src.suffix + ".nyb")
+    dst = next_collision_free(dst)
 
-    # Parametry KDF i cipher
-    import os, time
+    # KDF / cipher parametry
     salt = os.urandom(16)
     nonce = os.urandom(12)
-    kdf_cfg = cfg.get("argon2", {"m": 134217728, "t": 3, "p": 1})
-    key = derive_key_argon2id(password_source(), salt, kdf_cfg["m"], kdf_cfg["t"], kdf_cfg["p"])
-
-    meta = {
-        "original_name": p.name,
-        "mtime": int(p.stat().st_mtime),
-        "attribs": {"ro": bool(p.stat().st_mode & 0o222 == 0), "hidden": False},  # TODO: prawdziwe RO/Hidden
-    }
+    k = cfg.get("argon2", {"m": 134217728, "t": 3, "p": 1})
+    key = derive_key_argon2id(password_source(), salt, k["m"], k["t"], k["p"])
+    kdf_params = {"algo": "argon2id", "m": k["m"], "t": k["t"], "p": k["p"], "salt": _b64(salt)}
+    cipher_no_tag = {"algo": "aes-256-gcm", "nonce": _b64(nonce)}
+    meta = {"original_name": src.name, **metaio.read_meta(str(src))}
     app = {"format": "nyb", "ver": "0.1.0"}
 
-    cipher_no_tag = {"algo": "aes-256-gcm", "nonce": _b64(nonce)}
-    kdf_params = {"algo": "argon2id", "m": kdf_cfg["m"], "t": kdf_cfg["t"], "p": kdf_cfg["p"], "salt": _b64(salt)}
-
+    # Najpierw header BEZ taga → AAD
     header_json = hdr.build_header_json(kdf_params=kdf_params, cipher_params_no_tag=cipher_no_tag, meta=meta, app=app)
     aad = hdr.compute_aad(header_json)
 
-    ciphertext, tag = encrypt_bytes(plaintext, key, nonce, aad)
-    header_with_tag = hdr.add_tag_to_header_json(header_json, _b64(tag))
-    packed_header = hdr.pack_header(hdr.MAGIC, header_with_tag)
+    # 1) Szyfrujemy strumieniowo do pliku tymczasowego
+    chunk_size = cfg.get("io", {}).get("chunk_size", 4 * 1024 * 1024)
+    with tempfile.NamedTemporaryFile(delete=False) as cttmp, open(src, "rb") as fin:
+        _, tag = encrypt_stream(fin, cttmp, key, nonce, aad, chunk_size)
+        cttmp_path = Path(cttmp.name)
 
-    out_path = p.with_suffix(p.suffix + ".nyb")
-    with write_atomic(str(out_path)):
-        with open(str(out_path) + ".tmp", "wb") as fout:
+    try:
+        # 2) Do headera dodajemy tag, pakujemy i składamy wynik atomowo
+        header_with_tag = hdr.add_tag_to_header_json(header_json, _b64(tag))
+        packed_header = hdr.pack_header(hdr.MAGIC, header_with_tag)
+
+        with _atomic_writer(dst) as (fout, tmp_path):
             fout.write(packed_header)
-            fout.write(ciphertext)
-    return str(out_path)
+            with open(cttmp_path, "rb") as ctin:
+                shutil.copyfileobj(ctin, fout, length=chunk_size)
+    finally:
+        try:
+            cttmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    return str(dst)
 
 def decrypt_path(path: str, password_source, cfg, logger=None):
     """
-    Minimalna implementacja: odczyt .nyb → przywrócenie pliku obok.
+    Strumieniowe odszyfrowanie jednego pliku .nyb → oryginalna_nazwa (kolizje -> (1), (2)...)
+    Przywraca mtime/RO/Hidden.
     """
-    p = Path(path)
-    if not p.is_file() or p.suffix.lower() != ".nyb":
-        raise FileNotFoundError(f"Expected .nyb file: {p}")
+    nyb = Path(path)
+    if not nyb.is_file() or nyb.suffix.lower() != ".nyb":
+        raise FileNotFoundError(f"Expected .nyb file: {nyb}")
 
-    with open(p, "rb") as fin:
+    chunk_size = cfg.get("io", {}).get("chunk_size", 4 * 1024 * 1024)
+    with open(nyb, "rb") as fin:
         obj, payload_offset = hdr.unpack_header(fin)
-        kdf = obj["kdf"]
-        cipher = obj["cipher"]
-        meta = obj.get("meta", {})
-        tag = _b64d(cipher["tag"])
-        nonce = _b64d(cipher["nonce"])
+        kdf = obj["kdf"]; cipher = obj["cipher"]; meta = obj.get("meta", {})
+        tag = _b64d(cipher["tag"]); nonce = _b64d(cipher["nonce"])
+
+        # AAD = wersja JSON BEZ tagu
         header_json_no_tag = json.dumps({**obj, "cipher": {k: v for k, v in cipher.items() if k != "tag"}},
                                         separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         aad = hdr.compute_aad(header_json_no_tag)
-        ciphertext = fin.read()
 
-    key = derive_key_argon2id(password_source(), _b64d(kdf["salt"]), kdf["m"], kdf["t"], kdf["p"])
-    plaintext = decrypt_bytes(ciphertext, tag, key, nonce, aad)
+        # out path z kolizjami
+        out_name = meta.get("original_name") or nyb.stem
+        out_path = next_collision_free(nyb.parent / out_name)
 
-    out_name = meta.get("original_name") or p.stem  # fallback
-    out_path = p.parent / out_name
+        key = derive_key_argon2id(password_source(), _b64d(kdf["salt"]), kdf["m"], kdf["t"], kdf["p"])
 
-    with write_atomic(str(out_path)):
-        with open(str(out_path) + ".tmp", "wb") as fout:
-            fout.write(plaintext)
+        # Strumieniowy odczyt ciphertextu od payload_offset
+        fin.seek(payload_offset)
 
-    # TODO: przywrócenie mtime oraz RO/Hidden (kolejny sprint)
+        with _atomic_writer(out_path) as (fout, tmp_path):
+            decrypt_stream(fin, fout, key, nonce, aad, tag, chunk_size)
+
+    # Przywrócenie metadanych
+    metaio.apply_meta(out_path, {"mtime": meta.get("mtime"), "attribs": meta.get("attribs", {})})
+
     return str(out_path)
