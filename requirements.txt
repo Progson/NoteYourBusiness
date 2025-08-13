@@ -1,0 +1,5 @@
+PyQt6
+cryptography
+argon2-cffi
+send2trash
+pytest
