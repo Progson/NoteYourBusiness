@@ -100,3 +100,4 @@ class ProgressView(QWidget):
             row = [self.table.item(r, c).text() if self.table.item(r, c) else "" for c in range(4)]
             rows.append("\t".join(row))
         QGuiApplication.clipboard().setText("\n".join(rows))
+        QMessageBox.information(self, "Raport", "Raport został skopiowany do schowka.")
