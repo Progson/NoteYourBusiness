@@ -36,14 +36,18 @@
     main{max-width:1100px; margin:26px auto 40px; padding:0 22px}
     .grid{display:grid; grid-template-columns:repeat(2,1fr); gap:22px}
     @media (max-width:760px){.grid{grid-template-columns:1fr}}
-
+    /* Notatka na całą szerokość drugiego rzędu */
+    .tile.note {
+      grid-column: 1 / span 2;   /* zajmuje 2 kolumny */
+      min-height: 240px;
+    }
     .tile{position:relative; border-radius:var(--radius); padding:clamp(24px,4vw,34px); background: linear-gradient(180deg, var(--card-2), var(--card)); border:1px solid var(--stroke); box-shadow:var(--shadow); display:flex; align-items:center; justify-content:center; min-height:220px; overflow:hidden; isolation:isolate}
     .tile::before{content:""; position:absolute; inset:0; background: radial-gradient(300px 220px at 75% 15%, rgba(248,180,58,.14), transparent 60%); opacity:.9; pointer-events:none; z-index:0}
 
     /* FULL-TILE CLICKABLE BUTTON */
-    .tile button{all:unset; position:absolute; inset:0; width:100%; height:100%; cursor:pointer; display:grid; place-items:center; gap:22px; text-align:center}
+    .tile button{all:unset; position:absolute; inset:0; width:100%; height:100%; cursor:pointer; display:grid; place-items:center; gap:8px; text-align:center}
 
-    .label{font-size:clamp(16px,2.2vw,22px); font-weight:600; letter-spacing:.2px}
+    .label{font-size:clamp(16px,2.2vw,22px); font-weight:600; letter-spacing:.2px; margin-top:-10px}
     .icon{width:110px; height:110px; filter: drop-shadow(0 12px 24px rgba(248,180,58,.35))}
     .tile button:focus-visible{outline:3px solid var(--accent); outline-offset:4px; border-radius:18px}
     .tile:hover{transform:translateY(-2px); box-shadow:0 14px 40px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.05)}
@@ -184,26 +188,6 @@
             <path class="corner" d="M100 18 L100 34 L84 18 Z" fill="#f1a51c"/>
           </svg>
           <div class="label">Nowa notatka</div>
-        </button>
-      </div>
-
-      <!-- USTAWIENIA -->
-      <div class="tile settings" role="listitem">
-        <button type="button" class="btn" aria-label="Ustawienia aplikacji">
-          <svg class="icon" viewBox="0 0 128 128" aria-hidden="true">
-            <defs>
-              <linearGradient id="gold4" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#ffde91"/>
-                <stop offset="1" stop-color="#f8b43a"/>
-              </linearGradient>
-            </defs>
-            <g class="gear-rotor" fill="url(#gold4)">
-              <circle cx="64" cy="64" r="18" fill="#d88206"/>
-              <path d="M64 20l8 2 4 14 10-2 8 6-8 12 8 12-8 6-10-2-4 14-8 2-8-2-4-14-10 2-8-6 8-12-8-12 8-6 10 2 4-14 8-2z" fill="url(#gold4)"/>
-              <circle cx="64" cy="64" r="16" fill="#0b0d1300"/>
-            </g>
-          </svg>
-          <div class="label">Ustawienia</div>
         </button>
       </div>
 

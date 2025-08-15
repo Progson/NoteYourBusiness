@@ -14,7 +14,7 @@ class WebLauncherWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("NoteYourBusiness")
-        self.resize(900, 658)
+        self.resize(900, 680)
 
         self.view = WebView(self._handle_action, self)
         self.setCentralWidget(self.view)
