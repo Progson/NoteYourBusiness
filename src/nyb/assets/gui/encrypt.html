@@ -243,7 +243,8 @@
         const tds = tr.querySelectorAll('td');
         lines.push([tds[0].innerText, tds[1].innerText.trim(), tds[2].innerText, tds[3].innerText].join(';'));
       });
-      navigator.clipboard.writeText(lines.join('\n'));
+      navigator.clipboard.writeText(lines.join('\n'))
+        .then(() => alert('Raport został skopiowany do schowka.'));
     });
   </script>
 </body>
